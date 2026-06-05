@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 #
 # This file is part of REANA.
-# Copyright (C) 2024 CERN.
+# Copyright (C) 2021, 2022, 2023, 2024, 2025, 2026 CERN.
 #
 # REANA is free software; you can redistribute it and/or modify it
 # under the terms of the MIT License; see LICENSE file for more details.
@@ -78,6 +78,20 @@ common_settings = CommonSettings(
 
 # Required:
 # Implementation of your executor
+def _str_resource(value):
+    """Coerce a Snakemake ``resources`` value to a string for RJC submission.
+
+    Snakemake users naturally write numeric resource values (e.g.
+    ``htcondor_request_cpus=4``), but the REANA job-controller schema
+    expects string fields for these resource-passthrough parameters.
+    Applied only to the explicit REANA passthrough keys, not to all
+    Snakemake resources.
+    """
+    if value is None:
+        return None
+    return str(value)
+
+
 class Executor(RemoteExecutor):
     """REANA Snakemake executor implementation."""
 
@@ -157,10 +171,22 @@ class Executor(RemoteExecutor):
                     "htcondor_accounting_group": job.resources.get(
                         "htcondor_accounting_group", ""
                     ),
+                    "htcondor_request_cpus": _str_resource(
+                        job.resources.get("htcondor_request_cpus")
+                    ),
+                    "htcondor_request_memory": _str_resource(
+                        job.resources.get("htcondor_request_memory")
+                    ),
+                    "htcondor_request_disk": _str_resource(
+                        job.resources.get("htcondor_request_disk")
+                    ),
+                    "htcondor_requirements": job.resources.get("htcondor_requirements"),
                     "slurm_partition": job.resources.get("slurm_partition"),
                     "slurm_time": job.resources.get("slurm_time"),
-                    "c4p_cpu_cores": job.resources.get("c4p_cpu_cores"),
-                    "c4p_memory_limit": job.resources.get("c4p_memory_limit"),
+                    "c4p_cpu_cores": _str_resource(job.resources.get("c4p_cpu_cores")),
+                    "c4p_memory_limit": _str_resource(
+                        job.resources.get("c4p_memory_limit")
+                    ),
                     "c4p_additional_requirements": job.resources.get(
                         "c4p_additional_requirements"
                     ),
