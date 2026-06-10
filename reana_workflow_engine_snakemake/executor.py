@@ -133,76 +133,69 @@ class Executor(RemoteExecutor):
         publish_workflow_start(
             workflow_uuid=workflow_uuid, publisher=self.publisher, job=job
         )
-        try:
-            log.info(f"Job '{job.name}' received, command: {job.shellcmd}")
-            container_image = self._get_container_image(job)
-            if job.is_shell:
-                # Shell command
-                job_request_body = {
-                    "workflow_uuid": workflow_uuid,
-                    "image": container_image,
-                    "cmd": f"cd {workflow_workspace} && {job.shellcmd}",
-                    "prettified_cmd": job.shellcmd,
-                    "workflow_workspace": workflow_workspace,
-                    "job_name": self._build_job_name(job),
-                    "cvmfs_mounts": MOUNT_CVMFS,
-                    "compute_backend": job.resources.get("compute_backend", ""),
-                    "kerberos": job.resources.get("kerberos", WORKFLOW_KERBEROS),
-                    "unpacked_img": job.resources.get("unpacked_img", False),
-                    "kubernetes_uid": job.resources.get("kubernetes_uid"),
-                    "kubernetes_cpu_request": job.resources.get(
-                        "kubernetes_cpu_request"
-                    ),
-                    "kubernetes_cpu_limit": job.resources.get("kubernetes_cpu_limit"),
-                    "kubernetes_memory_request": job.resources.get(
-                        "kubernetes_memory_request"
-                    ),
-                    "kubernetes_memory_limit": job.resources.get(
-                        "kubernetes_memory_limit"
-                    ),
-                    "kubernetes_job_timeout": job.resources.get(
-                        "kubernetes_job_timeout"
-                    ),
-                    "voms_proxy": job.resources.get("voms_proxy", False),
-                    "rucio": job.resources.get("rucio", False),
-                    "htcondor_max_runtime": job.resources.get(
-                        "htcondor_max_runtime", ""
-                    ),
-                    "htcondor_accounting_group": job.resources.get(
-                        "htcondor_accounting_group", ""
-                    ),
-                    "htcondor_request_cpus": _str_resource(
-                        job.resources.get("htcondor_request_cpus")
-                    ),
-                    "htcondor_request_memory": _str_resource(
-                        job.resources.get("htcondor_request_memory")
-                    ),
-                    "htcondor_request_disk": _str_resource(
-                        job.resources.get("htcondor_request_disk")
-                    ),
-                    "htcondor_requirements": job.resources.get("htcondor_requirements"),
-                    "slurm_partition": job.resources.get("slurm_partition"),
-                    "slurm_time": job.resources.get("slurm_time"),
-                    "c4p_cpu_cores": _str_resource(job.resources.get("c4p_cpu_cores")),
-                    "c4p_memory_limit": _str_resource(
-                        job.resources.get("c4p_memory_limit")
-                    ),
-                    "c4p_additional_requirements": job.resources.get(
-                        "c4p_additional_requirements"
-                    ),
-                }
-                job_id = self._submit_job(
-                    self.rjc_api_client, self.publisher, job_request_body
-                )
-                self.report_job_submission(
-                    SubmittedJobInfo(job=job, external_jobid=job_id)
-                )
-            elif job.is_run:
-                # Python code
+        log.info(f"Job '{job.name}' received, command: {job.shellcmd}")
+        container_image = self._get_container_image(job)
+        if not job.is_shell:
+            if job.is_run:
                 log.error("Python code execution is not supported yet.")
+            return
+
+        job_request_body = {
+            "workflow_uuid": workflow_uuid,
+            "image": container_image,
+            "cmd": f"cd {workflow_workspace} && {job.shellcmd}",
+            "prettified_cmd": job.shellcmd,
+            "workflow_workspace": workflow_workspace,
+            "job_name": self._build_job_name(job),
+            "cvmfs_mounts": MOUNT_CVMFS,
+            "compute_backend": job.resources.get("compute_backend", ""),
+            "kerberos": job.resources.get("kerberos", WORKFLOW_KERBEROS),
+            "unpacked_img": job.resources.get("unpacked_img", False),
+            "kubernetes_uid": job.resources.get("kubernetes_uid"),
+            "kubernetes_cpu_request": job.resources.get("kubernetes_cpu_request"),
+            "kubernetes_cpu_limit": job.resources.get("kubernetes_cpu_limit"),
+            "kubernetes_memory_request": job.resources.get("kubernetes_memory_request"),
+            "kubernetes_memory_limit": job.resources.get("kubernetes_memory_limit"),
+            "kubernetes_job_timeout": job.resources.get("kubernetes_job_timeout"),
+            "voms_proxy": job.resources.get("voms_proxy", False),
+            "rucio": job.resources.get("rucio", False),
+            "htcondor_max_runtime": job.resources.get("htcondor_max_runtime", ""),
+            "htcondor_accounting_group": job.resources.get(
+                "htcondor_accounting_group", ""
+            ),
+            "htcondor_request_cpus": _str_resource(
+                job.resources.get("htcondor_request_cpus")
+            ),
+            "htcondor_request_memory": _str_resource(
+                job.resources.get("htcondor_request_memory")
+            ),
+            "htcondor_request_disk": _str_resource(
+                job.resources.get("htcondor_request_disk")
+            ),
+            "htcondor_requirements": job.resources.get("htcondor_requirements"),
+            "slurm_partition": job.resources.get("slurm_partition"),
+            "slurm_time": job.resources.get("slurm_time"),
+            "c4p_cpu_cores": _str_resource(job.resources.get("c4p_cpu_cores")),
+            "c4p_memory_limit": _str_resource(job.resources.get("c4p_memory_limit")),
+            "c4p_additional_requirements": job.resources.get(
+                "c4p_additional_requirements"
+            ),
+        }
+
+        try:
+            job_id = self._rjc_submit(self.rjc_api_client, job_request_body)
         except Exception as e:
             log.error(f"Error submitting job {job.name}: {e}")
+            self.report_job_error(SubmittedJobInfo(job=job))
+            self.publisher.publish_workflow_status(
+                workflow_uuid,
+                RunStatus.failed.value,
+                message=f"Job submission failed for {job.name}: {e}",
+            )
             return
+
+        self._post_submit(self.publisher, workflow_uuid, job_id)
+        self.report_job_submission(SubmittedJobInfo(job=job, external_jobid=job_id))
 
     async def check_active_jobs(
         self, active_jobs: List[SubmittedJobInfo]
@@ -361,15 +354,18 @@ class Executor(RemoteExecutor):
             )
             return JobStatus.failed.name
 
-    def _submit_job(self, rjc_api_client, publisher, job_request_body):
-        """Submit job to REANA Job Controller."""
+    def _rjc_submit(self, rjc_api_client, job_request_body):
+        """Submit a job to REANA Job Controller."""
         response = rjc_api_client.submit(**job_request_body)
         job_id = str(response["job_id"])
 
         log.info(f"submitted job: {job_id}")
+        return job_id
+
+    def _post_submit(self, publisher, workflow_uuid, job_id):
+        """Publish a successfully submitted job."""
         publish_job_submission(
-            workflow_uuid=job_request_body["workflow_uuid"],
+            workflow_uuid=workflow_uuid,
             publisher=publisher,
             reana_job_id=job_id,
         )
-        return job_id
